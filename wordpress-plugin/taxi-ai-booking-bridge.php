@@ -25,6 +25,76 @@ function taxi_ai_bridge_get_secret() {
     return get_option('taxi_ai_booking_secret', '');
 }
 
+function taxi_ai_bridge_generate_secret() {
+    return wp_generate_password(48, true, true);
+}
+
+function taxi_ai_bridge_admin_menu() {
+    add_options_page(
+        'Taxi AI Booking Bridge',
+        'Taxi AI Booking Bridge',
+        'manage_options',
+        'taxi-ai-booking-bridge',
+        'taxi_ai_bridge_settings_page'
+    );
+}
+add_action('admin_menu', 'taxi_ai_bridge_admin_menu');
+
+function taxi_ai_bridge_settings_page() {
+    if (!current_user_can('manage_options')) {
+        return;
+    }
+
+    if (isset($_POST['taxi_ai_bridge_save']) && check_admin_referer('taxi_ai_bridge_settings')) {
+        $secret = sanitize_text_field($_POST['taxi_ai_booking_secret'] ?? '');
+        update_option('taxi_ai_booking_secret', $secret);
+        echo '<div class="notice notice-success"><p>Settings saved.</p></div>';
+    }
+
+    if (isset($_POST['taxi_ai_bridge_generate']) && check_admin_referer('taxi_ai_bridge_settings')) {
+        $secret = taxi_ai_bridge_generate_secret();
+        update_option('taxi_ai_booking_secret', $secret);
+        echo '<div class="notice notice-success"><p>New secret generated.</p></div>';
+    }
+
+    $secret = taxi_ai_bridge_get_secret();
+    ?>
+    <div class="wrap">
+        <h1>Taxi AI Booking Bridge</h1>
+        <p>This companion plugin adds secure AI booking endpoints without modifying Taxi Booking Engine.</p>
+
+        <form method="post">
+            <?php wp_nonce_field('taxi_ai_bridge_settings'); ?>
+            <table class="form-table" role="presentation">
+                <tr>
+                    <th scope="row"><label for="taxi_ai_booking_secret">AI Booking Secret</label></th>
+                    <td>
+                        <input
+                            type="text"
+                            id="taxi_ai_booking_secret"
+                            name="taxi_ai_booking_secret"
+                            value="<?php echo esc_attr($secret); ?>"
+                            class="regular-text"
+                            autocomplete="off"
+                        >
+                        <p class="description">Use the same value as <code>WORDPRESS_AI_SECRET</code> in the Node.js backend.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">REST Endpoints</th>
+                    <td>
+                        <code><?php echo esc_html(rest_url('tbe-ai/v1/bookings')); ?></code><br>
+                        <code><?php echo esc_html(rest_url('tbe-ai/v1/vehicles')); ?></code>
+                    </td>
+                </tr>
+            </table>
+            <?php submit_button('Save Settings', 'primary', 'taxi_ai_bridge_save', false); ?>
+            <?php submit_button('Generate New Secret', 'secondary', 'taxi_ai_bridge_generate', false); ?>
+        </form>
+    </div>
+    <?php
+}
+
 function taxi_ai_bridge_authorize_request(WP_REST_Request $request) {
     $expected = taxi_ai_bridge_get_secret();
     $provided = $request->get_header('x-tbe-ai-secret');
@@ -65,6 +135,10 @@ function taxi_ai_bridge_activate() {
 
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
     dbDelta($sql);
+
+    if (!get_option('taxi_ai_booking_secret')) {
+        add_option('taxi_ai_booking_secret', taxi_ai_bridge_generate_secret());
+    }
 }
 register_activation_hook(__FILE__, 'taxi_ai_bridge_activate');
 
@@ -242,4 +316,3 @@ function taxi_ai_bridge_register_routes() {
     ));
 }
 add_action('rest_api_init', 'taxi_ai_bridge_register_routes');
-
