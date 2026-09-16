@@ -68,3 +68,9 @@ create index if not exists chat_messages_session_id_idx on public.chat_messages 
 create index if not exists bookings_customer_email_idx on public.bookings (customer_email);
 create index if not exists bookings_wordpress_booking_id_idx on public.bookings (wordpress_booking_id);
 
+alter table public.customers enable row level security;
+alter table public.chat_sessions enable row level security;
+alter table public.chat_messages enable row level security;
+alter table public.bookings enable row level security;
+alter table public.booking_events enable row level security;
+alter table public.chat_embeddings enable row level security;
