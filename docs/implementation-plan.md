@@ -9,10 +9,11 @@
 
 ## WordPress
 
-- Add `wordpress-plugin/ai-booking-api.php` to the existing Taxi Booking Engine plugin.
-- Include it from `booking-engine.php`.
+- Add the standalone `wordpress-plugin/taxi-ai-booking-bridge.php` companion plugin.
+- Do not edit the existing Taxi Booking Engine plugin.
 - Configure the same secret in WordPress and `WORDPRESS_AI_SECRET` in Hostinger.
 - WordPress stores bookings in `wp_tbe_bookings` and sends email through existing WP Mail SMTP setup.
+- AI-only metadata is stored by the companion plugin in `wp_taxi_ai_booking_meta`.
 
 ## Booking Flow
 
@@ -30,4 +31,3 @@
 - Short model replies.
 - Session state kept in memory and mirrored to Supabase when configured.
 - Vector search only for returning-customer lookup, not every message.
-

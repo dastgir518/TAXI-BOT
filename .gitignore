@@ -10,4 +10,6 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 Thumbs.db
-
+.agents/
+skills-lock.json
+.tmp-wp-deploy/
