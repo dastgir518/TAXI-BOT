@@ -14,3 +14,4 @@ Thumbs.db
 skills-lock.json
 .tmp-wp-deploy/
 supabase/.temp/
+keys.txt
