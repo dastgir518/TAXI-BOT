@@ -41,8 +41,8 @@ export const config = {
   },
   supabase: {
     url: process.env.SUPABASE_URL || '',
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
-    anonKey: process.env.SUPABASE_ANON_KEY || '',
+    serviceRoleKey: process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+    anonKey: process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '',
   },
   wordpress: {
     aiSecret: process.env.WORDPRESS_AI_SECRET || '',
@@ -77,4 +77,3 @@ export function requireConfig(condition, message) {
     throw error;
   }
 }
-
