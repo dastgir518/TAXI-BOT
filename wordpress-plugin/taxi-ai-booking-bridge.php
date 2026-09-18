@@ -12,6 +12,7 @@ if (!defined('ABSPATH')) {
 }
 
 define('TAXI_AI_BOOKING_BRIDGE_VERSION', '0.1.0');
+define('TAXI_AI_DEFAULT_BACKEND_URL', 'https://bot.taxiweybridge.co.uk');
 
 function taxi_ai_bridge_get_secret() {
     if (defined('TAXI_AI_BOOKING_SECRET') && TAXI_AI_BOOKING_SECRET) {
@@ -27,6 +28,17 @@ function taxi_ai_bridge_get_secret() {
 
 function taxi_ai_bridge_generate_secret() {
     return wp_generate_password(48, true, true);
+}
+
+function taxi_ai_bridge_get_widget_position() {
+    $position = get_option('taxi_ai_widget_position', 'bottom-right');
+    return in_array($position, array('bottom-right', 'bottom-left'), true) ? $position : 'bottom-right';
+}
+
+function taxi_ai_bridge_get_backend_url() {
+    $backend_url = get_option('taxi_ai_backend_url', TAXI_AI_DEFAULT_BACKEND_URL);
+    $backend_url = $backend_url ? untrailingslashit($backend_url) : TAXI_AI_DEFAULT_BACKEND_URL;
+    return esc_url_raw($backend_url);
 }
 
 function taxi_ai_bridge_admin_menu() {
@@ -48,6 +60,19 @@ function taxi_ai_bridge_settings_page() {
     if (isset($_POST['taxi_ai_bridge_save']) && check_admin_referer('taxi_ai_bridge_settings')) {
         $secret = sanitize_text_field($_POST['taxi_ai_booking_secret'] ?? '');
         update_option('taxi_ai_booking_secret', $secret);
+
+        $widget_enabled = isset($_POST['taxi_ai_widget_enabled']) ? '1' : '0';
+        update_option('taxi_ai_widget_enabled', $widget_enabled);
+
+        $widget_position = sanitize_text_field($_POST['taxi_ai_widget_position'] ?? 'bottom-right');
+        if (!in_array($widget_position, array('bottom-right', 'bottom-left'), true)) {
+            $widget_position = 'bottom-right';
+        }
+        update_option('taxi_ai_widget_position', $widget_position);
+
+        $backend_url = esc_url_raw($_POST['taxi_ai_backend_url'] ?? TAXI_AI_DEFAULT_BACKEND_URL);
+        update_option('taxi_ai_backend_url', untrailingslashit($backend_url));
+
         echo '<div class="notice notice-success"><p>Settings saved.</p></div>';
     }
 
@@ -58,6 +83,9 @@ function taxi_ai_bridge_settings_page() {
     }
 
     $secret = taxi_ai_bridge_get_secret();
+    $widget_enabled = get_option('taxi_ai_widget_enabled', '1');
+    $widget_position = taxi_ai_bridge_get_widget_position();
+    $backend_url = taxi_ai_bridge_get_backend_url();
     ?>
     <div class="wrap">
         <h1>Taxi AI Booking Bridge</h1>
@@ -85,6 +113,43 @@ function taxi_ai_bridge_settings_page() {
                     <td>
                         <code><?php echo esc_html(rest_url('tbe-ai/v1/bookings')); ?></code><br>
                         <code><?php echo esc_html(rest_url('tbe-ai/v1/vehicles')); ?></code>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">Frontend Widget</th>
+                    <td>
+                        <label>
+                            <input
+                                type="checkbox"
+                                name="taxi_ai_widget_enabled"
+                                value="1"
+                                <?php checked($widget_enabled, '1'); ?>
+                            >
+                            Enable AI booking chat on the website
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="taxi_ai_widget_position">Widget Position</label></th>
+                    <td>
+                        <select id="taxi_ai_widget_position" name="taxi_ai_widget_position">
+                            <option value="bottom-right" <?php selected($widget_position, 'bottom-right'); ?>>Bottom right</option>
+                            <option value="bottom-left" <?php selected($widget_position, 'bottom-left'); ?>>Bottom left</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="taxi_ai_backend_url">Bot Backend URL</label></th>
+                    <td>
+                        <input
+                            type="url"
+                            id="taxi_ai_backend_url"
+                            name="taxi_ai_backend_url"
+                            value="<?php echo esc_attr($backend_url); ?>"
+                            class="regular-text"
+                            placeholder="<?php echo esc_attr(TAXI_AI_DEFAULT_BACKEND_URL); ?>"
+                        >
+                        <p class="description">The public Node.js booking bot URL used by the chat widget.</p>
                     </td>
                 </tr>
             </table>
@@ -138,6 +203,18 @@ function taxi_ai_bridge_activate() {
 
     if (!get_option('taxi_ai_booking_secret')) {
         add_option('taxi_ai_booking_secret', taxi_ai_bridge_generate_secret());
+    }
+
+    if (get_option('taxi_ai_widget_enabled', null) === null) {
+        add_option('taxi_ai_widget_enabled', '1');
+    }
+
+    if (!get_option('taxi_ai_widget_position')) {
+        add_option('taxi_ai_widget_position', 'bottom-right');
+    }
+
+    if (!get_option('taxi_ai_backend_url')) {
+        add_option('taxi_ai_backend_url', TAXI_AI_DEFAULT_BACKEND_URL);
     }
 }
 register_activation_hook(__FILE__, 'taxi_ai_bridge_activate');
@@ -316,3 +393,497 @@ function taxi_ai_bridge_register_routes() {
     ));
 }
 add_action('rest_api_init', 'taxi_ai_bridge_register_routes');
+
+function taxi_ai_bridge_render_widget() {
+    if (is_admin() || get_option('taxi_ai_widget_enabled', '1') !== '1') {
+        return;
+    }
+
+    $position = taxi_ai_bridge_get_widget_position();
+    $backend_url = taxi_ai_bridge_get_backend_url();
+    $source = wp_parse_url(home_url(), PHP_URL_HOST);
+    ?>
+    <div
+        id="taxi-ai-widget-root"
+        class="taxi-ai-widget <?php echo esc_attr($position); ?>"
+        data-backend-url="<?php echo esc_attr($backend_url); ?>"
+        data-source="<?php echo esc_attr($source); ?>"
+    >
+        <section class="taxi-ai-panel" aria-label="AI booking chat" aria-hidden="true">
+            <div class="taxi-ai-header">
+                <div>
+                    <div class="taxi-ai-kicker">Taxi booking</div>
+                    <div class="taxi-ai-title">AI assistant</div>
+                </div>
+                <button type="button" class="taxi-ai-icon-button taxi-ai-close" title="Close booking chat" aria-label="Close booking chat">x</button>
+            </div>
+
+            <div class="taxi-ai-start">
+                <div class="taxi-ai-start-copy">
+                    <strong>Start your booking</strong>
+                    <span>Enter your details and the assistant will collect the journey information.</span>
+                </div>
+                <form class="taxi-ai-start-form">
+                    <label>
+                        <span>Name</span>
+                        <input type="text" name="name" autocomplete="name" required minlength="2">
+                    </label>
+                    <label>
+                        <span>Email</span>
+                        <input type="email" name="email" autocomplete="email" required>
+                    </label>
+                    <button type="submit">Start chat</button>
+                </form>
+            </div>
+
+            <div class="taxi-ai-chat" hidden>
+                <div class="taxi-ai-messages" aria-live="polite"></div>
+                <form class="taxi-ai-message-form">
+                    <textarea name="message" rows="1" maxlength="2000" placeholder="Type your booking details..." required></textarea>
+                    <button type="submit">Send</button>
+                </form>
+            </div>
+        </section>
+
+        <button type="button" class="taxi-ai-launcher" title="Open booking chat" aria-label="Open booking chat">
+            <span>AI</span>
+        </button>
+    </div>
+
+    <style>
+        #taxi-ai-widget-root {
+            --taxi-ai-bg: rgba(18, 22, 30, 0.72);
+            --taxi-ai-bg-strong: rgba(18, 22, 30, 0.9);
+            --taxi-ai-surface: rgba(255, 255, 255, 0.11);
+            --taxi-ai-surface-strong: rgba(255, 255, 255, 0.18);
+            --taxi-ai-border: rgba(255, 255, 255, 0.2);
+            --taxi-ai-text: #ffffff;
+            --taxi-ai-muted: rgba(255, 255, 255, 0.72);
+            --taxi-ai-accent: #f4c84a;
+            --taxi-ai-accent-text: #1a1a1a;
+            --taxi-ai-shadow: 0 22px 70px rgba(0, 0, 0, 0.36);
+            position: fixed;
+            bottom: 22px;
+            z-index: 999999;
+            color: var(--taxi-ai-text);
+            font-family: inherit;
+            letter-spacing: 0;
+        }
+
+        #taxi-ai-widget-root.bottom-right {
+            right: 22px;
+        }
+
+        #taxi-ai-widget-root.bottom-left {
+            left: 22px;
+        }
+
+        #taxi-ai-widget-root * {
+            box-sizing: border-box;
+        }
+
+        .taxi-ai-panel {
+            width: min(380px, calc(100vw - 32px));
+            max-height: min(680px, calc(100vh - 98px));
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            margin-bottom: 14px;
+            border: 1px solid var(--taxi-ai-border);
+            border-radius: 22px;
+            background:
+                linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05)),
+                var(--taxi-ai-bg);
+            box-shadow: var(--taxi-ai-shadow);
+            backdrop-filter: blur(22px) saturate(140%);
+            -webkit-backdrop-filter: blur(22px) saturate(140%);
+        }
+
+        #taxi-ai-widget-root.is-open .taxi-ai-panel {
+            display: flex;
+        }
+
+        .taxi-ai-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 18px 18px 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .taxi-ai-kicker {
+            margin-bottom: 4px;
+            color: var(--taxi-ai-muted);
+            font-size: 12px;
+            line-height: 1.2;
+            text-transform: uppercase;
+        }
+
+        .taxi-ai-title {
+            font-size: 18px;
+            line-height: 1.2;
+            font-weight: 700;
+        }
+
+        .taxi-ai-icon-button,
+        .taxi-ai-launcher,
+        .taxi-ai-start-form button,
+        .taxi-ai-message-form button {
+            border: 0;
+            cursor: pointer;
+            font-family: inherit;
+            letter-spacing: 0;
+        }
+
+        .taxi-ai-icon-button {
+            width: 34px;
+            height: 34px;
+            flex: 0 0 34px;
+            border-radius: 50%;
+            color: var(--taxi-ai-text);
+            background: var(--taxi-ai-surface);
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .taxi-ai-start,
+        .taxi-ai-chat {
+            min-height: 0;
+            padding: 18px;
+        }
+
+        .taxi-ai-start[hidden],
+        .taxi-ai-chat[hidden] {
+            display: none;
+        }
+
+        .taxi-ai-start-copy {
+            display: grid;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+
+        .taxi-ai-start-copy strong {
+            font-size: 17px;
+            line-height: 1.25;
+        }
+
+        .taxi-ai-start-copy span {
+            color: var(--taxi-ai-muted);
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        .taxi-ai-start-form {
+            display: grid;
+            gap: 12px;
+        }
+
+        .taxi-ai-start-form label {
+            display: grid;
+            gap: 6px;
+            margin: 0;
+            color: var(--taxi-ai-muted);
+            font-size: 13px;
+            line-height: 1.2;
+        }
+
+        .taxi-ai-start-form input,
+        .taxi-ai-message-form textarea {
+            width: 100%;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 14px;
+            outline: none;
+            color: var(--taxi-ai-text);
+            background: rgba(255, 255, 255, 0.12);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            font-family: inherit;
+            font-size: 15px;
+        }
+
+        .taxi-ai-start-form input {
+            height: 46px;
+            padding: 0 14px;
+        }
+
+        .taxi-ai-start-form input:focus,
+        .taxi-ai-message-form textarea:focus {
+            border-color: rgba(244, 200, 74, 0.85);
+            box-shadow: 0 0 0 3px rgba(244, 200, 74, 0.18);
+        }
+
+        .taxi-ai-start-form button,
+        .taxi-ai-message-form button {
+            min-height: 44px;
+            border-radius: 14px;
+            padding: 0 18px;
+            color: var(--taxi-ai-accent-text);
+            background: var(--taxi-ai-accent);
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        .taxi-ai-chat {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .taxi-ai-messages {
+            min-height: 250px;
+            max-height: min(470px, calc(100vh - 260px));
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding-right: 4px;
+        }
+
+        .taxi-ai-message {
+            width: fit-content;
+            max-width: 86%;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 16px;
+            padding: 10px 12px;
+            color: var(--taxi-ai-text);
+            background: var(--taxi-ai-surface);
+            font-size: 14px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+        }
+
+        .taxi-ai-message.user {
+            align-self: flex-end;
+            color: var(--taxi-ai-accent-text);
+            background: rgba(244, 200, 74, 0.92);
+            border-color: rgba(244, 200, 74, 0.95);
+        }
+
+        .taxi-ai-message.assistant,
+        .taxi-ai-message.system {
+            align-self: flex-start;
+        }
+
+        .taxi-ai-message.error {
+            border-color: rgba(255, 120, 120, 0.45);
+            background: rgba(130, 30, 30, 0.36);
+        }
+
+        .taxi-ai-message-form {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: end;
+        }
+
+        .taxi-ai-message-form textarea {
+            min-height: 44px;
+            max-height: 120px;
+            resize: none;
+            padding: 11px 12px;
+            line-height: 1.35;
+        }
+
+        .taxi-ai-launcher {
+            width: 62px;
+            height: 62px;
+            display: grid;
+            place-items: center;
+            margin-left: auto;
+            border-radius: 50%;
+            color: var(--taxi-ai-accent-text);
+            background:
+                linear-gradient(145deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.08)),
+                var(--taxi-ai-accent);
+            box-shadow: 0 16px 44px rgba(0, 0, 0, 0.3);
+            font-size: 18px;
+            font-weight: 800;
+        }
+
+        #taxi-ai-widget-root.bottom-left .taxi-ai-launcher {
+            margin-right: auto;
+            margin-left: 0;
+        }
+
+        .taxi-ai-start-form button:disabled,
+        .taxi-ai-message-form button:disabled {
+            cursor: wait;
+            opacity: 0.72;
+        }
+
+        @media (max-width: 520px) {
+            #taxi-ai-widget-root {
+                right: 12px;
+                bottom: 12px;
+                left: 12px;
+            }
+
+            #taxi-ai-widget-root.bottom-right,
+            #taxi-ai-widget-root.bottom-left {
+                right: 12px;
+                left: 12px;
+            }
+
+            .taxi-ai-panel {
+                width: 100%;
+                max-height: calc(100vh - 88px);
+                border-radius: 18px;
+            }
+
+            .taxi-ai-messages {
+                max-height: calc(100vh - 290px);
+            }
+
+            .taxi-ai-message-form {
+                grid-template-columns: 1fr;
+            }
+
+            .taxi-ai-message-form button {
+                width: 100%;
+            }
+        }
+    </style>
+
+    <script>
+        (function () {
+            var root = document.getElementById('taxi-ai-widget-root');
+            if (!root) {
+                return;
+            }
+
+            var backendUrl = (root.dataset.backendUrl || '').replace(/\/+$/, '');
+            var source = root.dataset.source || window.location.hostname;
+            var panel = root.querySelector('.taxi-ai-panel');
+            var launcher = root.querySelector('.taxi-ai-launcher');
+            var closeButton = root.querySelector('.taxi-ai-close');
+            var startPane = root.querySelector('.taxi-ai-start');
+            var startForm = root.querySelector('.taxi-ai-start-form');
+            var chatPane = root.querySelector('.taxi-ai-chat');
+            var messages = root.querySelector('.taxi-ai-messages');
+            var messageForm = root.querySelector('.taxi-ai-message-form');
+            var messageInput = messageForm.querySelector('textarea');
+            var sessionId = '';
+
+            function setOpen(isOpen) {
+                root.classList.toggle('is-open', isOpen);
+                panel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+                if (isOpen) {
+                    setTimeout(function () {
+                        var focusTarget = sessionId ? messageInput : startForm.querySelector('input[name="name"]');
+                        if (focusTarget) {
+                            focusTarget.focus();
+                        }
+                    }, 60);
+                }
+            }
+
+            function addMessage(role, text) {
+                var item = document.createElement('div');
+                item.className = 'taxi-ai-message ' + role;
+                item.textContent = text;
+                messages.appendChild(item);
+                messages.scrollTop = messages.scrollHeight;
+                return item;
+            }
+
+            function setBusy(form, busy) {
+                Array.prototype.forEach.call(form.querySelectorAll('button, input, textarea'), function (field) {
+                    field.disabled = busy;
+                });
+            }
+
+            async function postJson(path, body) {
+                var response = await fetch(backendUrl + path, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(body)
+                });
+                var data = await response.json().catch(function () {
+                    return {};
+                });
+                if (!response.ok || data.ok === false) {
+                    throw new Error(data.message || data.error || 'Request failed');
+                }
+                return data;
+            }
+
+            launcher.addEventListener('click', function () {
+                setOpen(!root.classList.contains('is-open'));
+            });
+
+            closeButton.addEventListener('click', function () {
+                setOpen(false);
+            });
+
+            startForm.addEventListener('submit', async function (event) {
+                event.preventDefault();
+                if (!backendUrl) {
+                    addMessage('error system', 'The booking assistant is not configured yet.');
+                    return;
+                }
+
+                var formData = new FormData(startForm);
+                var name = String(formData.get('name') || '').trim();
+                var email = String(formData.get('email') || '').trim();
+
+                setBusy(startForm, true);
+                try {
+                    var data = await postJson('/api/chat/start', {
+                        source: source,
+                        customer: {
+                            name: name,
+                            email: email
+                        }
+                    });
+                    sessionId = data.sessionId || '';
+                    startPane.hidden = true;
+                    chatPane.hidden = false;
+                    addMessage('assistant', data.message || 'Thanks. What is your pickup location and drop-off location?');
+                    messageInput.focus();
+                } catch (error) {
+                    addMessage('error system', 'I could not start the booking chat. Please try again in a moment.');
+                } finally {
+                    setBusy(startForm, false);
+                }
+            });
+
+            messageForm.addEventListener('submit', async function (event) {
+                event.preventDefault();
+                var text = messageInput.value.trim();
+                if (!text || !sessionId) {
+                    return;
+                }
+
+                messageInput.value = '';
+                addMessage('user', text);
+                setBusy(messageForm, true);
+
+                try {
+                    var data = await postJson('/api/chat/message', {
+                        sessionId: sessionId,
+                        message: text
+                    });
+                    addMessage('assistant', data.message || 'Thanks, I have updated your booking details.');
+                } catch (error) {
+                    addMessage('error system', 'I could not reach the booking assistant. Please try again.');
+                } finally {
+                    setBusy(messageForm, false);
+                    messageInput.focus();
+                }
+            });
+
+            messageInput.addEventListener('input', function () {
+                messageInput.style.height = 'auto';
+                messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
+            });
+        }());
+    </script>
+    <?php
+}
+add_action('wp_footer', 'taxi_ai_bridge_render_widget');
