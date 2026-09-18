@@ -60,6 +60,13 @@ export function publicConfig() {
     nodeEnv: config.nodeEnv,
     deepseekConfigured: Boolean(config.deepseek.apiKey),
     supabaseConfigured: Boolean(config.supabase.url && config.supabase.serviceRoleKey),
+    supabaseEnv: {
+      SUPABASE_URL: envPresence('SUPABASE_URL'),
+      SUPABASE_SECRET_KEY: envPresence('SUPABASE_SECRET_KEY'),
+      SUPABASE_SERVICE_ROLE_KEY: envPresence('SUPABASE_SERVICE_ROLE_KEY'),
+      SUPABASE_PUBLISHABLE_KEY: envPresence('SUPABASE_PUBLISHABLE_KEY'),
+      SUPABASE_ANON_KEY: envPresence('SUPABASE_ANON_KEY'),
+    },
     wordpressConfigured: Boolean(config.wordpress.aiSecret),
     telegramEnabled: config.telegram.enabled,
     sites: Object.values(config.wordpress.sites).map(({ key, name, wordpressUrl }) => ({
@@ -67,6 +74,14 @@ export function publicConfig() {
       name,
       wordpressUrl,
     })),
+  };
+}
+
+function envPresence(name) {
+  const value = process.env[name] || '';
+  return {
+    present: value.length > 0,
+    length: value.length,
   };
 }
 
