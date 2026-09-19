@@ -471,6 +471,7 @@ function taxi_ai_bridge_render_widget() {
                         <span class="taxi-ai-address-label">Search address</span>
                         <input type="text" class="taxi-ai-address-input" autocomplete="off">
                     </label>
+                    <div class="taxi-ai-address-results" hidden></div>
                     <button type="button" class="taxi-ai-address-cancel">Use chat instead</button>
                 </div>
                 <form class="taxi-ai-message-form">
@@ -519,7 +520,8 @@ function taxi_ai_bridge_render_widget() {
 
         .taxi-ai-panel {
             width: min(380px, calc(100vw - 32px));
-            max-height: min(680px, calc(100vh - 98px));
+            height: min(680px, calc(100vh - 98px));
+            min-height: 420px;
             display: none;
             flex-direction: column;
             overflow: hidden;
@@ -684,11 +686,12 @@ function taxi_ai_bridge_render_widget() {
             display: flex;
             flex-direction: column;
             gap: 14px;
+            overflow: hidden;
         }
 
         .taxi-ai-messages {
-            min-height: 250px;
-            max-height: min(470px, calc(100vh - 260px));
+            min-height: 0;
+            flex: 1 1 auto;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
@@ -697,6 +700,7 @@ function taxi_ai_bridge_render_widget() {
         }
 
         .taxi-ai-address-card {
+            flex: 0 0 auto;
             display: grid;
             gap: 10px;
             border: 1px solid rgba(244, 200, 74, 0.38);
@@ -751,6 +755,57 @@ function taxi_ai_bridge_render_widget() {
             font-family: inherit;
             font-size: 13px;
             line-height: 1.2;
+        }
+
+        .taxi-ai-address-results {
+            display: grid;
+            gap: 6px;
+            max-height: 178px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+
+        .taxi-ai-address-results[hidden] {
+            display: none;
+        }
+
+        .taxi-ai-address-option {
+            width: 100%;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 12px;
+            padding: 10px 11px;
+            color: var(--taxi-ai-text);
+            background: rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            font-family: inherit;
+            text-align: left;
+        }
+
+        .taxi-ai-address-option strong,
+        .taxi-ai-address-option span {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .taxi-ai-address-option strong {
+            font-size: 14px;
+            line-height: 1.25;
+        }
+
+        .taxi-ai-address-option span {
+            margin-top: 3px;
+            color: var(--taxi-ai-muted);
+            font-size: 12px;
+            line-height: 1.25;
+        }
+
+        .taxi-ai-address-option:hover,
+        .taxi-ai-address-option:focus {
+            border-color: rgba(244, 200, 74, 0.74);
+            background: rgba(255, 255, 255, 0.16);
+            outline: none;
         }
 
         .taxi-ai-message {
@@ -828,6 +883,7 @@ function taxi_ai_bridge_render_widget() {
         }
 
         .taxi-ai-message-form {
+            flex: 0 0 auto;
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
             gap: 10px;
@@ -884,12 +940,9 @@ function taxi_ai_bridge_render_widget() {
 
             .taxi-ai-panel {
                 width: 100%;
-                max-height: calc(100vh - 88px);
+                height: calc(100vh - 88px);
+                min-height: 360px;
                 border-radius: 18px;
-            }
-
-            .taxi-ai-messages {
-                max-height: calc(100vh - 290px);
             }
 
             .taxi-ai-message-form {
@@ -924,6 +977,7 @@ function taxi_ai_bridge_render_widget() {
             var addressCard = root.querySelector('.taxi-ai-address-card');
             var addressLabel = root.querySelector('.taxi-ai-address-label');
             var addressInput = root.querySelector('.taxi-ai-address-input');
+            var addressResults = root.querySelector('.taxi-ai-address-results');
             var addressCancel = root.querySelector('.taxi-ai-address-cancel');
             var messageForm = root.querySelector('.taxi-ai-message-form');
             var messageInput = messageForm.querySelector('textarea');
@@ -931,7 +985,10 @@ function taxi_ai_bridge_render_widget() {
             var thinkingMessage = null;
             var currentAddressField = '';
             var placesReadyPromise = null;
-            var autocomplete = null;
+            var autocompleteService = null;
+            var placesService = null;
+            var addressSearchTimer = null;
+            var addressSearchVersion = 0;
             var chatVersion = 0;
 
             function setOpen(isOpen) {
@@ -961,6 +1018,7 @@ function taxi_ai_bridge_render_widget() {
                 messageForm.reset();
                 messageInput.style.height = '';
                 addressInput.value = '';
+                clearAddressResults();
                 setBusy(startForm, false);
                 setBusy(messageForm, false);
             }
@@ -1034,7 +1092,8 @@ function taxi_ai_bridge_render_widget() {
                     : 'Postcode, airport, station or full drop-off address';
                 addressInput.value = '';
                 addressCard.hidden = false;
-                initPlacesAutocomplete();
+                clearAddressResults();
+                initPlacesServices();
             }
 
             function hasGooglePlaces() {
@@ -1075,23 +1134,105 @@ function taxi_ai_bridge_render_widget() {
                 return placesReadyPromise;
             }
 
-            async function initPlacesAutocomplete() {
+            async function initPlacesServices() {
                 var ready = await loadGooglePlaces();
-                if (!ready || autocomplete) {
+                if (!ready) {
                     if (!ready) {
                         addressCard.hidden = true;
                     }
                     return;
                 }
 
-                autocomplete = new window.google.maps.places.Autocomplete(addressInput, {
-                    componentRestrictions: { country: 'gb' },
-                    fields: ['address_components', 'formatted_address', 'geometry', 'name', 'place_id'],
+                if (!autocompleteService) {
+                    autocompleteService = new window.google.maps.places.AutocompleteService();
+                }
+
+                if (!placesService) {
+                    placesService = new window.google.maps.places.PlacesService(document.createElement('div'));
+                }
+            }
+
+            function clearAddressResults() {
+                addressResults.innerHTML = '';
+                addressResults.hidden = true;
+            }
+
+            function renderAddressPredictions(predictions) {
+                addressResults.innerHTML = '';
+                if (!predictions.length) {
+                    addressResults.hidden = true;
+                    return;
+                }
+
+                predictions.slice(0, 5).forEach(function (prediction) {
+                    var option = document.createElement('button');
+                    var mainText = prediction.structured_formatting?.main_text || prediction.description;
+                    var secondaryText = prediction.structured_formatting?.secondary_text || '';
+                    option.type = 'button';
+                    option.className = 'taxi-ai-address-option';
+                    option.innerHTML = '<strong></strong><span></span>';
+                    option.querySelector('strong').textContent = mainText;
+                    option.querySelector('span').textContent = secondaryText || prediction.description;
+                    option.addEventListener('click', function () {
+                        fetchPlaceDetails(prediction.place_id, prediction.description);
+                    });
+                    addressResults.appendChild(option);
                 });
 
-                autocomplete.addListener('place_changed', function () {
-                    var place = autocomplete.getPlace();
-                    if (!place || !currentAddressField) {
+                addressResults.hidden = false;
+            }
+
+            async function searchAddressPredictions() {
+                var query = addressInput.value.trim();
+                addressSearchVersion += 1;
+                var requestVersion = addressSearchVersion;
+
+                if (!query || query.length < 3 || !currentAddressField) {
+                    clearAddressResults();
+                    return;
+                }
+
+                await initPlacesServices();
+                if (!autocompleteService) {
+                    clearAddressResults();
+                    return;
+                }
+
+                autocompleteService.getPlacePredictions({
+                    input: query,
+                    componentRestrictions: { country: 'gb' },
+                }, function (predictions, status) {
+                    if (requestVersion !== addressSearchVersion) {
+                        return;
+                    }
+
+                    if (status !== window.google.maps.places.PlacesServiceStatus.OK || !predictions) {
+                        clearAddressResults();
+                        return;
+                    }
+
+                    renderAddressPredictions(predictions);
+                });
+            }
+
+            function fetchPlaceDetails(placeId, fallbackAddress) {
+                if (!placesService) {
+                    sendAddressSelection({
+                        formatted_address: fallbackAddress,
+                        place_id: placeId,
+                    });
+                    return;
+                }
+
+                placesService.getDetails({
+                    placeId: placeId,
+                    fields: ['address_components', 'formatted_address', 'geometry', 'name', 'place_id'],
+                }, function (place, status) {
+                    if (status !== window.google.maps.places.PlacesServiceStatus.OK || !place) {
+                        sendAddressSelection({
+                            formatted_address: fallbackAddress,
+                            place_id: placeId,
+                        });
                         return;
                     }
 
@@ -1133,6 +1274,7 @@ function taxi_ai_bridge_render_widget() {
                 };
 
                 addressCard.hidden = true;
+                clearAddressResults();
                 addMessage('user', label + ' selected: ' + address);
                 setBusy(messageForm, true);
                 showThinking();
@@ -1203,7 +1345,13 @@ function taxi_ai_bridge_render_widget() {
 
             addressCancel.addEventListener('click', function () {
                 addressCard.hidden = true;
+                clearAddressResults();
                 messageInput.focus();
+            });
+
+            addressInput.addEventListener('input', function () {
+                window.clearTimeout(addressSearchTimer);
+                addressSearchTimer = window.setTimeout(searchAddressPredictions, 220);
             });
 
             startForm.addEventListener('submit', async function (event) {
