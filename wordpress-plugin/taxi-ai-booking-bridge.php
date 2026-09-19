@@ -73,6 +73,9 @@ function taxi_ai_bridge_settings_page() {
         $backend_url = esc_url_raw($_POST['taxi_ai_backend_url'] ?? TAXI_AI_DEFAULT_BACKEND_URL);
         update_option('taxi_ai_backend_url', untrailingslashit($backend_url));
 
+        $google_places_api_key = sanitize_text_field($_POST['taxi_ai_google_places_api_key'] ?? '');
+        update_option('taxi_ai_google_places_api_key', $google_places_api_key);
+
         echo '<div class="notice notice-success"><p>Settings saved.</p></div>';
     }
 
@@ -86,6 +89,7 @@ function taxi_ai_bridge_settings_page() {
     $widget_enabled = get_option('taxi_ai_widget_enabled', '1');
     $widget_position = taxi_ai_bridge_get_widget_position();
     $backend_url = taxi_ai_bridge_get_backend_url();
+    $google_places_api_key = get_option('taxi_ai_google_places_api_key', '');
     ?>
     <div class="wrap">
         <h1>Taxi AI Booking Bridge</h1>
@@ -152,6 +156,20 @@ function taxi_ai_bridge_settings_page() {
                         <p class="description">The public Node.js booking bot URL used by the chat widget.</p>
                     </td>
                 </tr>
+                <tr>
+                    <th scope="row"><label for="taxi_ai_google_places_api_key">Google Places API Key</label></th>
+                    <td>
+                        <input
+                            type="text"
+                            id="taxi_ai_google_places_api_key"
+                            name="taxi_ai_google_places_api_key"
+                            value="<?php echo esc_attr($google_places_api_key); ?>"
+                            class="regular-text"
+                            autocomplete="off"
+                        >
+                        <p class="description">Optional. Leave blank if the existing booking system already loads Google Places on the page.</p>
+                    </td>
+                </tr>
             </table>
             <?php submit_button('Save Settings', 'primary', 'taxi_ai_bridge_save', false); ?>
             <?php submit_button('Generate New Secret', 'secondary', 'taxi_ai_bridge_generate', false); ?>
@@ -215,6 +233,10 @@ function taxi_ai_bridge_activate() {
 
     if (!get_option('taxi_ai_backend_url')) {
         add_option('taxi_ai_backend_url', TAXI_AI_DEFAULT_BACKEND_URL);
+    }
+
+    if (get_option('taxi_ai_google_places_api_key', null) === null) {
+        add_option('taxi_ai_google_places_api_key', '');
     }
 }
 register_activation_hook(__FILE__, 'taxi_ai_bridge_activate');
@@ -401,12 +423,14 @@ function taxi_ai_bridge_render_widget() {
 
     $position = taxi_ai_bridge_get_widget_position();
     $backend_url = taxi_ai_bridge_get_backend_url();
+    $google_places_api_key = get_option('taxi_ai_google_places_api_key', '');
     $source = wp_parse_url(home_url(), PHP_URL_HOST);
     ?>
     <div
         id="taxi-ai-widget-root"
         class="taxi-ai-widget <?php echo esc_attr($position); ?>"
         data-backend-url="<?php echo esc_attr($backend_url); ?>"
+        data-google-places-api-key="<?php echo esc_attr($google_places_api_key); ?>"
         data-source="<?php echo esc_attr($source); ?>"
     >
         <section class="taxi-ai-panel" aria-label="AI booking chat" aria-hidden="true">
@@ -415,7 +439,10 @@ function taxi_ai_bridge_render_widget() {
                     <div class="taxi-ai-kicker">Taxi booking</div>
                     <div class="taxi-ai-title">AI assistant</div>
                 </div>
-                <button type="button" class="taxi-ai-icon-button taxi-ai-close" title="Close booking chat" aria-label="Close booking chat">x</button>
+                <div class="taxi-ai-header-actions">
+                    <button type="button" class="taxi-ai-icon-button taxi-ai-minimize" title="Minimize booking chat" aria-label="Minimize booking chat">-</button>
+                    <button type="button" class="taxi-ai-icon-button taxi-ai-close" title="Close and start a new booking chat" aria-label="Close and start a new booking chat">x</button>
+                </div>
             </div>
 
             <div class="taxi-ai-start">
@@ -423,6 +450,7 @@ function taxi_ai_bridge_render_widget() {
                     <strong>Start your booking</strong>
                     <span>Enter your details and the assistant will collect the journey information.</span>
                 </div>
+                <div class="taxi-ai-start-error" hidden></div>
                 <form class="taxi-ai-start-form">
                     <label>
                         <span>Name</span>
@@ -438,6 +466,13 @@ function taxi_ai_bridge_render_widget() {
 
             <div class="taxi-ai-chat" hidden>
                 <div class="taxi-ai-messages" aria-live="polite"></div>
+                <div class="taxi-ai-address-card" hidden>
+                    <label>
+                        <span class="taxi-ai-address-label">Search address</span>
+                        <input type="text" class="taxi-ai-address-input" autocomplete="off">
+                    </label>
+                    <button type="button" class="taxi-ai-address-cancel">Use chat instead</button>
+                </div>
                 <form class="taxi-ai-message-form">
                     <textarea name="message" rows="1" maxlength="2000" placeholder="Type your booking details..." required></textarea>
                     <button type="submit">Send</button>
@@ -527,6 +562,13 @@ function taxi_ai_bridge_render_widget() {
             font-weight: 700;
         }
 
+        .taxi-ai-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 0 0 auto;
+        }
+
         .taxi-ai-icon-button,
         .taxi-ai-launcher,
         .taxi-ai-start-form button,
@@ -555,7 +597,8 @@ function taxi_ai_bridge_render_widget() {
         }
 
         .taxi-ai-start[hidden],
-        .taxi-ai-chat[hidden] {
+        .taxi-ai-chat[hidden],
+        .taxi-ai-start-error[hidden] {
             display: none;
         }
 
@@ -574,6 +617,17 @@ function taxi_ai_bridge_render_widget() {
             color: var(--taxi-ai-muted);
             font-size: 14px;
             line-height: 1.45;
+        }
+
+        .taxi-ai-start-error {
+            margin-bottom: 14px;
+            border: 1px solid rgba(255, 120, 120, 0.42);
+            border-radius: 14px;
+            padding: 10px 12px;
+            color: var(--taxi-ai-text);
+            background: rgba(130, 30, 30, 0.34);
+            font-size: 14px;
+            line-height: 1.4;
         }
 
         .taxi-ai-start-form {
@@ -642,6 +696,63 @@ function taxi_ai_bridge_render_widget() {
             padding-right: 4px;
         }
 
+        .taxi-ai-address-card {
+            display: grid;
+            gap: 10px;
+            border: 1px solid rgba(244, 200, 74, 0.38);
+            border-radius: 16px;
+            padding: 12px;
+            background: rgba(244, 200, 74, 0.12);
+        }
+
+        .taxi-ai-address-card[hidden] {
+            display: none;
+        }
+
+        .taxi-ai-address-card label {
+            display: grid;
+            gap: 7px;
+            margin: 0;
+        }
+
+        .taxi-ai-address-label {
+            color: var(--taxi-ai-text);
+            font-size: 13px;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .taxi-ai-address-input {
+            width: 100%;
+            height: 44px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 14px;
+            outline: none;
+            color: var(--taxi-ai-text);
+            background: rgba(255, 255, 255, 0.13);
+            padding: 0 12px;
+            font-family: inherit;
+            font-size: 15px;
+        }
+
+        .taxi-ai-address-input:focus {
+            border-color: rgba(244, 200, 74, 0.85);
+            box-shadow: 0 0 0 3px rgba(244, 200, 74, 0.18);
+        }
+
+        .taxi-ai-address-cancel {
+            width: fit-content;
+            border: 0;
+            border-radius: 999px;
+            padding: 7px 11px;
+            color: var(--taxi-ai-text);
+            background: rgba(255, 255, 255, 0.12);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 13px;
+            line-height: 1.2;
+        }
+
         .taxi-ai-message {
             width: fit-content;
             max-width: 86%;
@@ -671,6 +782,49 @@ function taxi_ai_bridge_render_widget() {
         .taxi-ai-message.error {
             border-color: rgba(255, 120, 120, 0.45);
             background: rgba(130, 30, 30, 0.36);
+        }
+
+        .taxi-ai-thinking {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .taxi-ai-thinking-dots {
+            display: inline-flex;
+            gap: 4px;
+            align-items: center;
+        }
+
+        .taxi-ai-thinking-dots span {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+            opacity: 0.45;
+            animation: taxi-ai-thinking-pulse 1s infinite ease-in-out;
+        }
+
+        .taxi-ai-thinking-dots span:nth-child(2) {
+            animation-delay: 0.16s;
+        }
+
+        .taxi-ai-thinking-dots span:nth-child(3) {
+            animation-delay: 0.32s;
+        }
+
+        @keyframes taxi-ai-thinking-pulse {
+            0%,
+            80%,
+            100% {
+                transform: translateY(0);
+                opacity: 0.35;
+            }
+
+            40% {
+                transform: translateY(-3px);
+                opacity: 0.95;
+            }
         }
 
         .taxi-ai-message-form {
@@ -756,17 +910,29 @@ function taxi_ai_bridge_render_widget() {
             }
 
             var backendUrl = (root.dataset.backendUrl || '').replace(/\/+$/, '');
+            var googlePlacesApiKey = root.dataset.googlePlacesApiKey || '';
             var source = root.dataset.source || window.location.hostname;
             var panel = root.querySelector('.taxi-ai-panel');
             var launcher = root.querySelector('.taxi-ai-launcher');
+            var minimizeButton = root.querySelector('.taxi-ai-minimize');
             var closeButton = root.querySelector('.taxi-ai-close');
             var startPane = root.querySelector('.taxi-ai-start');
+            var startError = root.querySelector('.taxi-ai-start-error');
             var startForm = root.querySelector('.taxi-ai-start-form');
             var chatPane = root.querySelector('.taxi-ai-chat');
             var messages = root.querySelector('.taxi-ai-messages');
+            var addressCard = root.querySelector('.taxi-ai-address-card');
+            var addressLabel = root.querySelector('.taxi-ai-address-label');
+            var addressInput = root.querySelector('.taxi-ai-address-input');
+            var addressCancel = root.querySelector('.taxi-ai-address-cancel');
             var messageForm = root.querySelector('.taxi-ai-message-form');
             var messageInput = messageForm.querySelector('textarea');
             var sessionId = '';
+            var thinkingMessage = null;
+            var currentAddressField = '';
+            var placesReadyPromise = null;
+            var autocomplete = null;
+            var chatVersion = 0;
 
             function setOpen(isOpen) {
                 root.classList.toggle('is-open', isOpen);
@@ -781,6 +947,24 @@ function taxi_ai_bridge_render_widget() {
                 }
             }
 
+            function resetChat() {
+                chatVersion += 1;
+                hideThinking();
+                sessionId = '';
+                currentAddressField = '';
+                messages.innerHTML = '';
+                addressCard.hidden = true;
+                chatPane.hidden = true;
+                startPane.hidden = false;
+                setStartError('');
+                startForm.reset();
+                messageForm.reset();
+                messageInput.style.height = '';
+                addressInput.value = '';
+                setBusy(startForm, false);
+                setBusy(messageForm, false);
+            }
+
             function addMessage(role, text) {
                 var item = document.createElement('div');
                 item.className = 'taxi-ai-message ' + role;
@@ -788,6 +972,197 @@ function taxi_ai_bridge_render_widget() {
                 messages.appendChild(item);
                 messages.scrollTop = messages.scrollHeight;
                 return item;
+            }
+
+            function showThinking() {
+                hideThinking();
+                thinkingMessage = document.createElement('div');
+                thinkingMessage.className = 'taxi-ai-message assistant';
+                thinkingMessage.innerHTML = '<span class="taxi-ai-thinking">Thinking <span class="taxi-ai-thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span></span>';
+                messages.appendChild(thinkingMessage);
+                messages.scrollTop = messages.scrollHeight;
+            }
+
+            function hideThinking() {
+                if (thinkingMessage && thinkingMessage.parentNode) {
+                    thinkingMessage.parentNode.removeChild(thinkingMessage);
+                }
+                thinkingMessage = null;
+            }
+
+            function setStartError(text) {
+                startError.textContent = text || '';
+                startError.hidden = !text;
+            }
+
+            function nextAddressField(missingFields) {
+                missingFields = missingFields || [];
+                if (missingFields.indexOf('pickup location') !== -1) {
+                    return 'pickupLocation';
+                }
+                if (missingFields.indexOf('drop-off location') !== -1) {
+                    return 'dropoffLocation';
+                }
+                return '';
+            }
+
+            function addressFieldLabel(field) {
+                if (field === 'pickupLocation') {
+                    return 'Search pickup address';
+                }
+                if (field === 'dropoffLocation') {
+                    return 'Search drop-off address';
+                }
+                return 'Search address';
+            }
+
+            function updateAddressPrompt(missingFields) {
+                currentAddressField = nextAddressField(missingFields);
+                if (!currentAddressField) {
+                    addressCard.hidden = true;
+                    return;
+                }
+
+                if (!hasGooglePlaces() && !googlePlacesApiKey) {
+                    addressCard.hidden = true;
+                    return;
+                }
+
+                addressLabel.textContent = addressFieldLabel(currentAddressField);
+                addressInput.placeholder = currentAddressField === 'pickupLocation'
+                    ? 'Postcode, airport, station or full pickup address'
+                    : 'Postcode, airport, station or full drop-off address';
+                addressInput.value = '';
+                addressCard.hidden = false;
+                initPlacesAutocomplete();
+            }
+
+            function hasGooglePlaces() {
+                return Boolean(window.google && window.google.maps && window.google.maps.places);
+            }
+
+            function loadGooglePlaces() {
+                if (hasGooglePlaces()) {
+                    return Promise.resolve(true);
+                }
+
+                if (!googlePlacesApiKey) {
+                    return Promise.resolve(false);
+                }
+
+                if (placesReadyPromise) {
+                    return placesReadyPromise;
+                }
+
+                placesReadyPromise = new Promise(function (resolve) {
+                    var callbackName = 'taxiAiGooglePlacesReady_' + Date.now();
+                    window[callbackName] = function () {
+                        delete window[callbackName];
+                        resolve(hasGooglePlaces());
+                    };
+
+                    var script = document.createElement('script');
+                    script.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(googlePlacesApiKey) + '&libraries=places&callback=' + callbackName;
+                    script.async = true;
+                    script.defer = true;
+                    script.onerror = function () {
+                        delete window[callbackName];
+                        resolve(false);
+                    };
+                    document.head.appendChild(script);
+                });
+
+                return placesReadyPromise;
+            }
+
+            async function initPlacesAutocomplete() {
+                var ready = await loadGooglePlaces();
+                if (!ready || autocomplete) {
+                    if (!ready) {
+                        addressCard.hidden = true;
+                    }
+                    return;
+                }
+
+                autocomplete = new window.google.maps.places.Autocomplete(addressInput, {
+                    componentRestrictions: { country: 'gb' },
+                    fields: ['address_components', 'formatted_address', 'geometry', 'name', 'place_id'],
+                });
+
+                autocomplete.addListener('place_changed', function () {
+                    var place = autocomplete.getPlace();
+                    if (!place || !currentAddressField) {
+                        return;
+                    }
+
+                    sendAddressSelection(place);
+                });
+            }
+
+            function postcodeFromPlace(place) {
+                var components = place.address_components || [];
+                for (var index = 0; index < components.length; index += 1) {
+                    if ((components[index].types || []).indexOf('postal_code') !== -1) {
+                        return components[index].long_name || components[index].short_name || '';
+                    }
+                }
+                return '';
+            }
+
+            function placeAddress(place) {
+                return place.formatted_address || place.name || addressInput.value.trim();
+            }
+
+            async function sendAddressSelection(place) {
+                var field = currentAddressField;
+                var address = placeAddress(place);
+                if (!field || !address || !sessionId) {
+                    return;
+                }
+
+                var label = field === 'pickupLocation' ? 'Pickup' : 'Drop-off';
+                var location = place.geometry && place.geometry.location;
+                var structured = {
+                    type: 'location',
+                    field: field,
+                    address: address,
+                    placeId: place.place_id || '',
+                    postcode: postcodeFromPlace(place),
+                    lat: location ? location.lat() : null,
+                    lng: location ? location.lng() : null
+                };
+
+                addressCard.hidden = true;
+                addMessage('user', label + ' selected: ' + address);
+                setBusy(messageForm, true);
+                showThinking();
+                var requestVersion = chatVersion;
+
+                try {
+                    var data = await postJson('/api/chat/message', {
+                        sessionId: sessionId,
+                        message: label + ' selected: ' + address,
+                        structured: structured
+                    });
+                    if (requestVersion !== chatVersion) {
+                        return;
+                    }
+                    hideThinking();
+                    addMessage('assistant', data.message || 'Thanks, I have updated your booking details.');
+                    updateAddressPrompt(data.missingFields);
+                } catch (error) {
+                    if (requestVersion !== chatVersion) {
+                        return;
+                    }
+                    hideThinking();
+                    addMessage('error system', 'I could not save that address. Please type it in the chat instead.');
+                    addressCard.hidden = false;
+                } finally {
+                    if (requestVersion === chatVersion) {
+                        setBusy(messageForm, false);
+                        messageInput.focus();
+                    }
+                }
             }
 
             function setBusy(form, busy) {
@@ -817,8 +1192,18 @@ function taxi_ai_bridge_render_widget() {
                 setOpen(!root.classList.contains('is-open'));
             });
 
-            closeButton.addEventListener('click', function () {
+            minimizeButton.addEventListener('click', function () {
                 setOpen(false);
+            });
+
+            closeButton.addEventListener('click', function () {
+                resetChat();
+                setOpen(false);
+            });
+
+            addressCancel.addEventListener('click', function () {
+                addressCard.hidden = true;
+                messageInput.focus();
             });
 
             startForm.addEventListener('submit', async function (event) {
@@ -832,8 +1217,13 @@ function taxi_ai_bridge_render_widget() {
                 var name = String(formData.get('name') || '').trim();
                 var email = String(formData.get('email') || '').trim();
 
+                setStartError('');
                 setBusy(startForm, true);
+                var requestVersion = chatVersion;
                 try {
+                    startPane.hidden = true;
+                    chatPane.hidden = false;
+                    showThinking();
                     var data = await postJson('/api/chat/start', {
                         source: source,
                         customer: {
@@ -841,15 +1231,26 @@ function taxi_ai_bridge_render_widget() {
                             email: email
                         }
                     });
+                    if (requestVersion !== chatVersion) {
+                        return;
+                    }
                     sessionId = data.sessionId || '';
-                    startPane.hidden = true;
-                    chatPane.hidden = false;
+                    hideThinking();
                     addMessage('assistant', data.message || 'Thanks. What is your pickup location and drop-off location?');
+                    updateAddressPrompt(data.missingFields);
                     messageInput.focus();
                 } catch (error) {
-                    addMessage('error system', 'I could not start the booking chat. Please try again in a moment.');
+                    if (requestVersion !== chatVersion) {
+                        return;
+                    }
+                    hideThinking();
+                    chatPane.hidden = true;
+                    startPane.hidden = false;
+                    setStartError('I could not start the booking chat. Please try again in a moment.');
                 } finally {
-                    setBusy(startForm, false);
+                    if (requestVersion === chatVersion) {
+                        setBusy(startForm, false);
+                    }
                 }
             });
 
@@ -863,18 +1264,31 @@ function taxi_ai_bridge_render_widget() {
                 messageInput.value = '';
                 addMessage('user', text);
                 setBusy(messageForm, true);
+                showThinking();
+                var requestVersion = chatVersion;
 
                 try {
                     var data = await postJson('/api/chat/message', {
                         sessionId: sessionId,
                         message: text
                     });
+                    if (requestVersion !== chatVersion) {
+                        return;
+                    }
+                    hideThinking();
                     addMessage('assistant', data.message || 'Thanks, I have updated your booking details.');
+                    updateAddressPrompt(data.missingFields);
                 } catch (error) {
+                    if (requestVersion !== chatVersion) {
+                        return;
+                    }
+                    hideThinking();
                     addMessage('error system', 'I could not reach the booking assistant. Please try again.');
                 } finally {
-                    setBusy(messageForm, false);
-                    messageInput.focus();
+                    if (requestVersion === chatVersion) {
+                        setBusy(messageForm, false);
+                        messageInput.focus();
+                    }
                 }
             });
 

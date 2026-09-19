@@ -19,9 +19,54 @@ function applyExtraction(session, extraction) {
     ...(extraction.customer || {}),
   };
 
+  const booking = { ...(extraction.booking || {}) };
+
+  if (booking.pickupLocation && booking.pickupLocation !== session.booking?.pickupLocation) {
+    booking.pickupPlace = null;
+  }
+
+  if (booking.dropoffLocation && booking.dropoffLocation !== session.booking?.dropoffLocation) {
+    booking.dropoffPlace = null;
+  }
+
+  if (booking.viaLocation && booking.viaLocation !== session.booking?.viaLocation) {
+    booking.viaPlace = null;
+  }
+
   return updateSession(session, {
     customer,
-    booking: extraction.booking || {},
+    booking,
+  });
+}
+
+function applyStructuredInput(session, structured) {
+  if (!structured || structured.type !== 'location') {
+    return session;
+  }
+
+  const placeFields = {
+    pickupLocation: 'pickupPlace',
+    dropoffLocation: 'dropoffPlace',
+    viaLocation: 'viaPlace',
+  };
+
+  const placeField = placeFields[structured.field];
+  if (!placeField) {
+    return session;
+  }
+
+  return updateSession(session, {
+    booking: {
+      [structured.field]: structured.address,
+      [placeField]: {
+        address: structured.address,
+        placeId: structured.placeId || '',
+        postcode: structured.postcode || '',
+        lat: structured.lat ?? null,
+        lng: structured.lng ?? null,
+        source: 'google_places',
+      },
+    },
   });
 }
 
@@ -70,6 +115,8 @@ router.post('/message', asyncRoute(async (req, res) => {
   appendMessage(session, 'user', input.message);
   await saveMessage(session, 'user', input.message);
 
+  session = applyStructuredInput(session, input.structured);
+
   const extraction = await extractBookingFields(session, input.message);
   session = applyExtraction(session, extraction);
 
@@ -94,6 +141,8 @@ router.post('/stream', asyncRoute(async (req, res) => {
 
   appendMessage(session, 'user', input.message);
   await saveMessage(session, 'user', input.message);
+
+  session = applyStructuredInput(session, input.structured);
 
   const extraction = await extractBookingFields(session, input.message);
   session = applyExtraction(session, extraction);

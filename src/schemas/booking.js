@@ -6,10 +6,22 @@ export const customerSchema = z.object({
   phone: z.string().trim().min(5).optional().or(z.literal('')),
 });
 
+export const locationPlaceSchema = z.object({
+  address: z.string().trim().min(1),
+  placeId: z.string().trim().optional().default(''),
+  postcode: z.string().trim().optional().default(''),
+  lat: z.number().optional().nullable().default(null),
+  lng: z.number().optional().nullable().default(null),
+  source: z.string().trim().optional().default('google_places'),
+});
+
 export const bookingDraftSchema = z.object({
   pickupLocation: z.string().trim().optional().default(''),
+  pickupPlace: locationPlaceSchema.optional().nullable().default(null),
   dropoffLocation: z.string().trim().optional().default(''),
+  dropoffPlace: locationPlaceSchema.optional().nullable().default(null),
   viaLocation: z.string().trim().optional().default(''),
+  viaPlace: locationPlaceSchema.optional().nullable().default(null),
   pickupDate: z.string().trim().optional().default(''),
   pickupTime: z.string().trim().optional().default(''),
   passengers: z.coerce.number().int().min(1).max(99).optional().nullable().default(null),
@@ -33,9 +45,20 @@ export const startChatSchema = z.object({
   customer: customerSchema,
 });
 
+export const structuredLocationSchema = z.object({
+  type: z.literal('location'),
+  field: z.enum(['pickupLocation', 'dropoffLocation', 'viaLocation']),
+  address: z.string().trim().min(1),
+  placeId: z.string().trim().optional().default(''),
+  postcode: z.string().trim().optional().default(''),
+  lat: z.number().optional().nullable().default(null),
+  lng: z.number().optional().nullable().default(null),
+});
+
 export const messageSchema = z.object({
   sessionId: z.string().trim().min(8),
   message: z.string().trim().min(1).max(2000),
+  structured: structuredLocationSchema.optional(),
 });
 
 export const confirmBookingSchema = z.object({
