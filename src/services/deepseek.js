@@ -45,6 +45,40 @@ function conversationMessages(session) {
   ];
 }
 
+function questionForMissingField(missingFields) {
+  const field = missingFields[0];
+  const questions = {
+    'phone number': 'Thanks, what phone number should we use for the booking?',
+    'pickup location': 'Thanks, what is your pickup location?',
+    'drop-off location': 'Thanks, what is your drop-off address?',
+    'pickup date': 'Thanks, what date do you need the taxi?',
+    'pickup time': 'Thanks, what pickup time do you need?',
+    'number of passengers': 'Thanks, how many passengers are travelling?',
+    luggage: 'Thanks, how many large suitcases will you have?',
+    'hand luggage': 'Thanks, how many pieces of hand luggage will you have?',
+  };
+
+  return questions[field] || `Thanks, could you share your ${field}?`;
+}
+
+function keepConversationMoving(reply, session) {
+  const missing = requiredMissingFields(session);
+
+  if (missing.length === 0) {
+    return reply;
+  }
+
+  const text = (reply || '').trim();
+  const asksQuestion = text.includes('?');
+  const soundsComplete = /\b(updated|complete|confirmed|ready|all set)\b/i.test(text);
+
+  if (!text || !asksQuestion || soundsComplete) {
+    return questionForMissingField(missing);
+  }
+
+  return text;
+}
+
 export async function streamAssistantReply(session, onToken) {
   const stream = await getClient().chat.completions.create({
     model: config.deepseek.model,
@@ -72,10 +106,13 @@ export async function createAssistantReply(session) {
     temperature: 0.2,
   });
 
-  return completion.choices?.[0]?.message?.content?.trim() || '';
+  const reply = completion.choices?.[0]?.message?.content?.trim() || '';
+  return keepConversationMoving(reply, session);
 }
 
 export async function extractBookingFields(session, userMessage) {
+  const recent = session.messages.slice(-6).map(({ role, content }) => ({ role, content }));
+
   const completion = await getClient().chat.completions.create({
     model: config.deepseek.model,
     messages: [
@@ -86,11 +123,14 @@ export async function extractBookingFields(session, userMessage) {
           'Return only JSON. Do not add markdown.',
           'Use these keys when known: phone, pickupLocation, dropoffLocation, viaLocation, pickupDate, pickupTime, passengers, children, largeSuitcases, handLuggage, childSeats, boosterSeats, specialRequirements, vehicleName, isReturnJourney, returnDate, returnTime, returnPickupLocation, returnDropoffLocation.',
           'Dates should be YYYY-MM-DD when the user gives a clear date. Times should be HH:mm when clear. Leave unknown values out.',
+          'Use the recent conversation to resolve short answers.',
+          'If the assistant just asked which London airport and the user names an airport, update the airport-related field that was being clarified. Do not treat that airport name as the drop-off address unless the user explicitly says it is the drop-off.',
+          'Do not infer missing pickup or drop-off locations from a partial answer.',
         ].join('\n'),
       },
       {
         role: 'user',
-        content: `Current draft: ${JSON.stringify(session.booking)}\nCustomer: ${JSON.stringify(session.customer)}\nUser message: ${userMessage}`,
+        content: `Current draft: ${JSON.stringify(session.booking)}\nCustomer: ${JSON.stringify(session.customer)}\nRecent conversation: ${JSON.stringify(recent)}\nUser message: ${userMessage}`,
       },
     ],
     response_format: { type: 'json_object' },
@@ -108,4 +148,3 @@ export async function extractBookingFields(session, userMessage) {
     return { customer: {}, booking: {} };
   }
 }
-
