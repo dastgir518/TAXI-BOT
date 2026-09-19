@@ -79,8 +79,16 @@ export function requiredMissingFields(session) {
   if (!booking.dropoffLocation) missing.push('drop-off location');
   if (!booking.pickupDate) missing.push('pickup date');
   if (!booking.pickupTime) missing.push('pickup time');
+
+  return missing;
+}
+
+export function optionalMissingFields(session) {
+  const booking = session.booking || {};
+  const missing = [];
+
   if (!booking.passengers) missing.push('number of passengers');
-  if (booking.largeSuitcases === undefined || booking.largeSuitcases === null) missing.push('luggage');
+  if (booking.largeSuitcases === undefined || booking.largeSuitcases === null) missing.push('large suitcases');
   if (booking.handLuggage === undefined || booking.handLuggage === null) missing.push('hand luggage');
 
   return missing;

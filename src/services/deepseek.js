@@ -1,9 +1,13 @@
 import OpenAI from 'openai';
 
 import { config, requireConfig } from './config.js';
-import { requiredMissingFields } from '../schemas/booking.js';
+import { optionalMissingFields, requiredMissingFields } from '../schemas/booking.js';
 
 let client;
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 function getClient() {
   requireConfig(config.deepseek.apiKey, 'DeepSeek API key is not configured');
@@ -21,25 +25,30 @@ function getClient() {
 function systemPrompt(session) {
   return [
     `You are the booking assistant for ${session.site.name}.`,
+    `Today is ${todayIsoDate()}. Use this date for relative date phrases like today, tomorrow, next Friday, and this weekend.`,
     'You collect taxi booking requests in natural language.',
     'Keep replies short and friendly.',
     'Ask only for missing details. Prefer one or two questions at a time.',
     'Never promise final driver availability or final price.',
-    'When all details are present, summarize and ask the customer to confirm.',
-    'Required details: phone, pickup, drop-off, pickup date, pickup time, passengers, luggage, special notes if any.',
-    'If the trip mentions an airport, ask for flight number, terminal if known, and whether meet-and-greet is needed.',
+    'Never say the booking has been created, submitted, or sent. The backend will create the booking after the customer confirms.',
+    'Blocking details required before booking: phone, pickup location, drop-off location, pickup date, pickup time.',
+    'Optional details: passengers, luggage, hand luggage, child seats, flight number, terminal, meet-and-greet, and special notes.',
+    'Ask optional details once. If the customer skips, refuses, or says to book anyway, do not ask that optional detail again.',
+    'If the trip mentions an airport, ask once for flight number, terminal if known, and whether meet-and-greet is needed.',
+    'Before booking, summarize the draft and ask: "Would you like to mention anything else? If not, reply confirm and I will book it."',
   ].join('\n');
 }
 
 function conversationMessages(session) {
   const recent = session.messages.slice(-12).map(({ role, content }) => ({ role, content }));
   const missing = requiredMissingFields(session);
+  const optionalMissing = optionalMissingFields(session);
 
   return [
     { role: 'system', content: systemPrompt(session) },
     {
       role: 'system',
-      content: `Known customer: ${JSON.stringify(session.customer)}\nKnown booking draft: ${JSON.stringify(session.booking)}\nMissing fields: ${missing.join(', ') || 'none'}`,
+      content: `Current date: ${todayIsoDate()}\nKnown customer: ${JSON.stringify(session.customer)}\nKnown booking draft: ${JSON.stringify(session.booking)}\nBlocking missing fields: ${missing.join(', ') || 'none'}\nOptional missing fields: ${optionalMissing.join(', ') || 'none'}`,
     },
     ...recent,
   ];
@@ -123,6 +132,8 @@ export async function extractBookingFields(session, userMessage) {
           'Return only JSON. Do not add markdown.',
           'Use these keys when known: phone, pickupLocation, dropoffLocation, viaLocation, pickupDate, pickupTime, passengers, children, largeSuitcases, handLuggage, childSeats, boosterSeats, specialRequirements, vehicleName, isReturnJourney, returnDate, returnTime, returnPickupLocation, returnDropoffLocation.',
           'Dates should be YYYY-MM-DD when the user gives a clear date. Times should be HH:mm when clear. Leave unknown values out.',
+          `Today is ${todayIsoDate()}. Resolve relative dates like today, tomorrow, next Friday, and this weekend from this date.`,
+          'Do not output a pickupDate or returnDate in the past unless the user explicitly gives a past date.',
           'Use the recent conversation to resolve short answers.',
           'If the assistant just asked which London airport and the user names an airport, update the airport-related field that was being clarified. Do not treat that airport name as the drop-off address unless the user explicitly says it is the drop-off.',
           'Do not infer missing pickup or drop-off locations from a partial answer.',
