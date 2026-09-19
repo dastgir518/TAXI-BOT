@@ -12,6 +12,11 @@ function readSites() {
       name: 'Taxi Weybridge',
       wordpressUrl: process.env.WORDPRESS_WEYBRIDGE_URL || 'https://taxiweybridge.co.uk',
     },
+    'geminicars.co.uk': {
+      key: 'gemini',
+      name: 'Gemini Cars',
+      wordpressUrl: process.env.WORDPRESS_GEMINI_URL || 'https://geminicars.co.uk',
+    },
   };
 }
 
@@ -25,6 +30,8 @@ function readCorsOrigins() {
     'https://www.taxiwaltononthames.co.uk',
     'https://taxiweybridge.co.uk',
     'https://www.taxiweybridge.co.uk',
+    'https://geminicars.co.uk',
+    'https://www.geminicars.co.uk',
     'http://localhost:3000',
     'http://localhost:5173',
   ];
