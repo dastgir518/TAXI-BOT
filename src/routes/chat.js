@@ -2,9 +2,9 @@ import { Router } from 'express';
 
 import { asyncRoute } from '../services/async-route.js';
 import { resolveSite } from '../services/site-registry.js';
-import { createSession, getSession, appendMessage, updateSession } from '../services/sessions.js';
+import { createSession, getSession, appendMessage, updateSession, putSession } from '../services/sessions.js';
 import { createAssistantReply, extractBookingFields, streamAssistantReply } from '../services/deepseek.js';
-import { saveMessage, saveSessionSnapshot } from '../services/supabase.js';
+import { loadSessionSnapshot, saveMessage, saveSessionSnapshot } from '../services/supabase.js';
 import { messageSchema, requiredMissingFields, startChatSchema } from '../schemas/booking.js';
 
 const router = Router();
@@ -23,6 +23,23 @@ function applyExtraction(session, extraction) {
     customer,
     booking: extraction.booking || {},
   });
+}
+
+async function getPersistentSession(sessionId) {
+  try {
+    return getSession(sessionId);
+  } catch (error) {
+    if (error.code !== 'session_not_found') {
+      throw error;
+    }
+
+    const restored = await loadSessionSnapshot(sessionId);
+    if (restored) {
+      return putSession(restored);
+    }
+
+    throw error;
+  }
 }
 
 router.post('/start', asyncRoute(async (req, res) => {
@@ -48,7 +65,7 @@ router.post('/start', asyncRoute(async (req, res) => {
 
 router.post('/message', asyncRoute(async (req, res) => {
   const input = messageSchema.parse(req.body);
-  let session = getSession(input.sessionId);
+  let session = await getPersistentSession(input.sessionId);
 
   appendMessage(session, 'user', input.message);
   await saveMessage(session, 'user', input.message);
@@ -73,7 +90,7 @@ router.post('/message', asyncRoute(async (req, res) => {
 
 router.post('/stream', asyncRoute(async (req, res) => {
   const input = messageSchema.parse(req.body);
-  let session = getSession(input.sessionId);
+  let session = await getPersistentSession(input.sessionId);
 
   appendMessage(session, 'user', input.message);
   await saveMessage(session, 'user', input.message);
@@ -118,4 +135,3 @@ router.post('/stream', asyncRoute(async (req, res) => {
 }));
 
 export default router;
-

@@ -35,6 +35,15 @@ export function getSession(sessionId) {
   return session;
 }
 
+export function findSession(sessionId) {
+  return sessions.get(sessionId) || null;
+}
+
+export function putSession(session) {
+  sessions.set(session.id, session);
+  return session;
+}
+
 export function appendMessage(session, role, content) {
   session.messages.push({
     role,
@@ -60,4 +69,3 @@ export function updateSession(session, patch) {
   sessions.set(updated.id, updated);
   return updated;
 }
-
