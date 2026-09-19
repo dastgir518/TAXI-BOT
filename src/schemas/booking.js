@@ -70,6 +70,14 @@ export function normalizeDraft(input = {}) {
   return bookingDraftSchema.parse(input);
 }
 
+function normalizeLocationForCompare(value = '') {
+  return String(value)
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[.,]+$/g, '')
+    .toLowerCase();
+}
+
 export function requiredMissingFields(session) {
   const booking = session.booking || {};
   const missing = [];
@@ -79,6 +87,13 @@ export function requiredMissingFields(session) {
   if (!booking.dropoffLocation) missing.push('drop-off location');
   if (!booking.pickupDate) missing.push('pickup date');
   if (!booking.pickupTime) missing.push('pickup time');
+  if (
+    booking.pickupLocation
+    && booking.dropoffLocation
+    && normalizeLocationForCompare(booking.pickupLocation) === normalizeLocationForCompare(booking.dropoffLocation)
+  ) {
+    missing.push('different drop-off location');
+  }
 
   return missing;
 }

@@ -32,6 +32,7 @@ function systemPrompt(session) {
     'Never promise final driver availability or final price.',
     'Never say the booking has been created, submitted, or sent. The backend will create the booking after the customer confirms.',
     'Blocking details required before booking: phone, pickup location, drop-off location, pickup date, pickup time.',
+    'If pickup and drop-off are the same place, treat it as a likely mistake and ask for the correct drop-off before confirmation.',
     'Optional details: passengers, luggage, hand luggage, child seats, flight number, terminal, meet-and-greet, and special notes.',
     'Ask optional details once. If the customer skips, refuses, or says to book anyway, do not ask that optional detail again.',
     'If the trip mentions an airport, ask once for flight number, terminal if known, and whether meet-and-greet is needed.',

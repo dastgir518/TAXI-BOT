@@ -93,6 +93,7 @@ function missingFieldQuestion(missingFields) {
     'drop-off location': 'I can book it after I have the drop-off location. What is your drop-off address?',
     'pickup date': 'I can book it after I have the pickup date. What date do you need the taxi?',
     'pickup time': 'I can book it after I have the pickup time. What time do you need the taxi?',
+    'different drop-off location': 'Pickup and drop-off are currently the same. What is the correct drop-off address?',
   };
 
   return questions[missingFields[0]] || `I can book it after I have your ${missingFields[0]}.`;
