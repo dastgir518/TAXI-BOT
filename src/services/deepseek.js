@@ -2,11 +2,12 @@ import OpenAI from 'openai';
 
 import { config, requireConfig } from './config.js';
 import { optionalMissingFields, requiredMissingFields } from '../schemas/booking.js';
+import { londonDateTime } from './booking-time.js';
 
 let client;
 
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  return londonDateTime().slice(0, 10);
 }
 
 function getClient() {
@@ -32,6 +33,7 @@ function systemPrompt(session) {
     'Never promise final driver availability or final price.',
     'Never say the booking has been created, submitted, or sent. The backend will create the booking after the customer confirms.',
     'Blocking details required before booking: phone, pickup location, drop-off location, pickup date, pickup time.',
+    'When you ask for pickup and drop-off in that order, interpret the customer\'s first location answer as pickup and the next location answer as drop-off unless the customer clearly says otherwise.',
     'If pickup and drop-off are the same place, treat it as a likely mistake and ask for the correct drop-off before confirmation.',
     'Optional details: passengers, luggage, hand luggage, child seats, flight number, terminal, meet-and-greet, and special notes.',
     'Ask optional details once. If the customer skips, refuses, or says to book anyway, do not ask that optional detail again.',
@@ -136,7 +138,7 @@ export async function extractBookingFields(session, userMessage) {
           `Today is ${todayIsoDate()}. Resolve relative dates like today, tomorrow, next Friday, and this weekend from this date.`,
           'Do not output a pickupDate or returnDate in the past unless the user explicitly gives a past date.',
           'Use the recent conversation to resolve short answers.',
-          'If the assistant just asked which London airport and the user names an airport, update the airport-related field that was being clarified. Do not treat that airport name as the drop-off address unless the user explicitly says it is the drop-off.',
+          'Location slot rule: if the assistant asked for pickup and drop-off in that order, the first location-like answer fills pickup and the next location-like answer fills drop-off unless the user clearly says otherwise.',
           'Do not infer missing pickup or drop-off locations from a partial answer.',
         ].join('\n'),
       },

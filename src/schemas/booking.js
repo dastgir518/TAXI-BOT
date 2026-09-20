@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { londonDateTime, validDate, validTime } from '../services/booking-time.js';
 
 export const customerSchema = z.object({
   name: z.string().trim().min(2),
@@ -82,11 +83,24 @@ export function requiredMissingFields(session) {
   const booking = session.booking || {};
   const missing = [];
 
-  if (!session.customer?.phone) missing.push('phone number');
+  const phone = String(session.customer?.phone || '');
+  if (!/^[+\d\s().-]+$/.test(phone) || !/^\d{7,15}$/.test(phone.replace(/\D/g, ''))) missing.push('phone number');
   if (!booking.pickupLocation) missing.push('pickup location');
   if (!booking.dropoffLocation) missing.push('drop-off location');
-  if (!booking.pickupDate) missing.push('pickup date');
-  if (!booking.pickupTime) missing.push('pickup time');
+  if (!validDate(booking.pickupDate)) missing.push('pickup date');
+  if (!validTime(booking.pickupTime)) missing.push('pickup time');
+  if (validDate(booking.pickupDate) && validTime(booking.pickupTime)
+    && `${booking.pickupDate}T${booking.pickupTime}` <= londonDateTime()) {
+    missing.push('future pickup date and time');
+  }
+  if (booking.isReturnJourney) {
+    if (!validDate(booking.returnDate)) missing.push('return date');
+    if (!validTime(booking.returnTime)) missing.push('return time');
+    if (validDate(booking.returnDate) && validTime(booking.returnTime)
+      && `${booking.returnDate}T${booking.returnTime}` <= `${booking.pickupDate}T${booking.pickupTime}`) {
+      missing.push('return after pickup');
+    }
+  }
   if (
     booking.pickupLocation
     && booking.dropoffLocation

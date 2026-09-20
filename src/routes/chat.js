@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import { asyncRoute } from '../services/async-route.js';
+import { londonDateTime } from '../services/booking-time.js';
 import { resolveSite } from '../services/site-registry.js';
 import { createSession, getSession, appendMessage, updateSession, putSession } from '../services/sessions.js';
 import { createAssistantReply, extractBookingFields, streamAssistantReply } from '../services/deepseek.js';
@@ -14,6 +15,89 @@ function initialAssistantMessage(session) {
   return `Hi ${session.customer.name}, I can help with your taxi booking. What is your pickup location and drop-off location?`;
 }
 
+function latestAssistantMessage(session) {
+  return [...(session.messages || [])].reverse().find((message) => message.role === 'assistant')?.content || '';
+}
+
+function normalizeLocationText(value = '') {
+  return String(value)
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[.,]+$/g, '');
+}
+
+function looksLikeLocationAnswer(message, assistantMessage = '') {
+  const text = normalizeLocationText(message);
+  if (!text || text.length < 3) return false;
+  if (/^(yes|no|ok|okay|confirm|confirmed|thanks|thank you|skip|none|nothing)$/i.test(text)) return false;
+  if (/^\+?[\d\s().-]{5,}$/.test(text)) return false;
+  if (/\b(today|tomorrow|tonight|morning|afternoon|evening|am|pm|o'clock|confirm|book)\b/i.test(text)) return false;
+
+  const locationWords = /\b(airport|station|bridge|street|st|road|rd|lane|ln|avenue|ave|drive|dr|way|close|crescent|place|plaza|hotel|terminal|postcode|tw\d|kt\d|sw\d|se\d|e\d|w\d|n\d)\b/i;
+  if (locationWords.test(text)) return true;
+
+  const assistantAskedForLocation = /\b(pickup|pick-up|drop-?off|address|location|where from|where to)\b/i.test(assistantMessage);
+  return assistantAskedForLocation && /^[a-z][a-z\s,'-]{2,}$/i.test(text);
+}
+
+function asksForPickupThenDropoff(assistantMessage = '') {
+  return /\bpickup\b/i.test(assistantMessage)
+    && /\bdrop-?off\b/i.test(assistantMessage)
+    && assistantMessage.toLowerCase().indexOf('pickup') < assistantMessage.toLowerCase().search(/drop-?off/i);
+}
+
+function isClarifyingExistingPickup(assistantMessage = '') {
+  const text = assistantMessage.toLowerCase();
+  const asksForClarification = /\b(which|what|clarify|mean|exact|specific)\b/.test(text);
+  const referencesPickup = /\bpickup\b/.test(text) || /\bfrom\b/.test(text);
+  const asksForNewDropoff = /\b(drop-?off|destination|other address|other end|where to)\b/.test(text);
+
+  return asksForClarification && referencesPickup && !asksForNewDropoff;
+}
+
+export function alignLocationExtraction(session, userMessage, extraction, structured) {
+  if (structured) return extraction;
+
+  const current = session.booking || {};
+  const assistantMessage = latestAssistantMessage(session);
+  const booking = { ...(extraction.booking || {}) };
+
+  if (!booking.pickupLocation && !booking.dropoffLocation) return extraction;
+
+  // Explicit directions and complete routes take precedence over answer order.
+  if (/\b(from|to|pickup|pick-up|dropoff|drop-off|destination|change|instead)\b/i.test(userMessage)
+    || (booking.pickupLocation && booking.dropoffLocation)) {
+    return extraction;
+  }
+
+  const locationText = normalizeLocationText(userMessage);
+  if (!looksLikeLocationAnswer(locationText, assistantMessage)) {
+    return extraction;
+  }
+
+  if (current.pickupLocation && !current.dropoffLocation && isClarifyingExistingPickup(assistantMessage)) {
+    booking.pickupLocation = booking.pickupLocation || booking.dropoffLocation || locationText;
+    delete booking.dropoffLocation;
+    return { ...extraction, booking };
+  }
+
+  if (!current.pickupLocation && !current.dropoffLocation && asksForPickupThenDropoff(assistantMessage)) {
+    const firstLocation = booking.pickupLocation || booking.dropoffLocation || locationText;
+    booking.pickupLocation = firstLocation;
+    delete booking.dropoffLocation;
+    return { ...extraction, booking };
+  }
+
+  if (current.pickupLocation && !current.dropoffLocation) {
+    if (booking.pickupLocation && !booking.dropoffLocation && booking.pickupLocation !== current.pickupLocation) {
+      booking.dropoffLocation = booking.pickupLocation;
+      delete booking.pickupLocation;
+    }
+  }
+
+  return { ...extraction, booking };
+}
+
 function applyExtraction(session, extraction) {
   const customer = {
     ...session.customer,
@@ -21,7 +105,7 @@ function applyExtraction(session, extraction) {
   };
 
   const booking = { ...(extraction.booking || {}) };
-  const today = new Date().toISOString().slice(0, 10);
+  const today = londonDateTime().slice(0, 10);
 
   if (booking.pickupDate && booking.pickupDate < today) {
     delete booking.pickupDate;
@@ -94,6 +178,10 @@ function missingFieldQuestion(missingFields) {
     'pickup date': 'I can book it after I have the pickup date. What date do you need the taxi?',
     'pickup time': 'I can book it after I have the pickup time. What time do you need the taxi?',
     'different drop-off location': 'Pickup and drop-off are currently the same. What is the correct drop-off address?',
+    'future pickup date and time': 'That pickup time is in the past. What future date and time would you like?',
+    'return date': 'What date would you like the return journey?',
+    'return time': 'What time would you like the return journey?',
+    'return after pickup': 'The return needs to be after your outward pickup. What return date and time would you like?',
   };
 
   return questions[missingFields[0]] || `I can book it after I have your ${missingFields[0]}.`;
@@ -190,7 +278,9 @@ router.post('/message', asyncRoute(async (req, res) => {
 
   session = applyStructuredInput(session, input.structured);
 
-  const extraction = await extractBookingFields(session, input.message);
+  const extraction = input.structured || /^(confirm|confirmed|yes confirm|book it|go ahead)[.!\s]*$/i.test(input.message)
+    ? { customer: {}, booking: {} }
+    : alignLocationExtraction(session, input.message, await extractBookingFields(session, input.message));
   session = applyExtraction(session, extraction);
 
   if (isConfirmationMessage(input.message)) {
@@ -235,7 +325,9 @@ router.post('/stream', asyncRoute(async (req, res) => {
 
   session = applyStructuredInput(session, input.structured);
 
-  const extraction = await extractBookingFields(session, input.message);
+  const extraction = input.structured
+    ? { customer: {}, booking: {} }
+    : alignLocationExtraction(session, input.message, await extractBookingFields(session, input.message));
   session = applyExtraction(session, extraction);
 
   res.writeHead(200, {

@@ -92,6 +92,13 @@ export async function loadSessionSnapshot(sessionId) {
       createdAt: message.created_at,
     }));
 
+  const { data: savedBooking } = await client.from('bookings')
+    .select('id, wordpress_booking_id')
+    .eq('session_id', sessionId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   return {
     id: sessionRow.id,
     site,
@@ -103,6 +110,8 @@ export async function loadSessionSnapshot(sessionId) {
     booking: normalizeDraft(sessionRow.booking_draft || {}),
     messages,
     status: sessionRow.status || 'collecting',
+    wordpressBookingId: savedBooking?.wordpress_booking_id || null,
+    supabaseBookingId: savedBooking?.id || null,
     summary: sessionRow.summary || '',
     createdAt: sessionRow.created_at,
     updatedAt: sessionRow.updated_at,
@@ -112,6 +121,14 @@ export async function loadSessionSnapshot(sessionId) {
 export async function saveBookingCopy(session, wordpressBooking) {
   const client = getSupabase();
   if (!client) return null;
+
+  const { data: existing } = await client.from('bookings')
+    .select('*')
+    .eq('source_site', session.site.host)
+    .eq('wordpress_booking_id', wordpressBooking.id)
+    .limit(1)
+    .maybeSingle();
+  if (existing) return existing;
 
   const { data, error } = await client
     .from('bookings')
